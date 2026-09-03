@@ -1,7 +1,6 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
-  Upload, 
-  FileUp, 
+  UploadCloud, 
   Clock, 
   Check, 
   Copy, 
@@ -10,17 +9,25 @@ import {
   AlertCircle, 
   Trash2, 
   CheckCheck,
-  FileIcon,
-  ImageIcon,
-  VideoIcon,
-  MusicIcon
+  FileText,
+  Image as ImageIcon,
+  Video as VideoIcon,
+  Music as MusicIcon,
+  Sparkles,
+  ShieldCheck,
+  Zap,
+  ArrowUpRight,
+  FolderPlus
 } from 'lucide-react';
-import { UploadMode, ExpiryOption, UploadQueueItem, FileRecord } from '../types';
+import { animate, stagger } from 'animejs';
+import { UploadMode, ExpiryOption, UploadQueueItem, FileRecord, DEFAULT_MASTER_USERHASH } from '../types';
+import { animateHeroTypography } from '../lib/animations';
 
 interface UploadZoneProps {
   mode: UploadMode;
   setMode: (mode: UploadMode) => void;
   userhash: string;
+  onOpenUserhashModal?: () => void;
   onFileUploaded: (file: FileRecord) => void;
   onPreviewFile: (file: FileRecord) => void;
 }
@@ -29,6 +36,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   mode,
   setMode,
   userhash,
+  onOpenUserhashModal,
   onFileUploaded,
   onPreviewFile,
 }) => {
@@ -39,6 +47,27 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   const [allCopied, setAllCopied] = useState(false);
   const [linkFormat, setLinkFormat] = useState<'direct' | 'markdown' | 'html' | 'bbcode'>('direct');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeHash = userhash.trim() || DEFAULT_MASTER_USERHASH;
+  const isMasterHash = !userhash.trim() || userhash.trim() === DEFAULT_MASTER_USERHASH;
+
+  // Kinetic typography entrance on mount
+  useEffect(() => {
+    animateHeroTypography('#upload-hero-title', '#upload-hero-subtitle');
+  }, []);
+
+  // Animate queue items entrance
+  useEffect(() => {
+    if (queue.length > 0) {
+      animate('.upload-queue-card', {
+        translateY: [12, 0],
+        opacity: [0, 1],
+        ease: 'outExpo',
+        duration: 400,
+        delay: stagger(40),
+      });
+    }
+  }, [queue.length]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -69,6 +98,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     const formData = new FormData();
     formData.append('files', item.file);
     formData.append('mode', mode);
+    formData.append('autoFallback', 'true');
     if (mode === 'litterbox') {
       formData.append('time', expiry);
     }
@@ -115,13 +145,19 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           );
         }
       } else {
+        let errMessage = `Upload failed: ${xhr.statusText || 'Server Error'}`;
+        try {
+          const res = JSON.parse(xhr.responseText);
+          if (res.error) errMessage = res.error;
+        } catch {}
+
         setQueue((prev) =>
           prev.map((q) =>
             q.id === item.id
               ? {
                   ...q,
                   status: 'error',
-                  errorMessage: `Upload failed: ${xhr.statusText || 'Server Error'}`,
+                  errorMessage: errMessage,
                 }
               : q
           )
@@ -157,7 +193,6 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
     setQueue((prev) => [...newItems, ...prev]);
 
-    // Start upload for each file immediately
     newItems.forEach((item) => {
       uploadSingleFile(item);
     });
@@ -191,7 +226,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedUrl(text);
-    setTimeout(() => setCopiedUrl(null), 2000);
+    setTimeout(() => setCopiedUrl(null), 1800);
   };
 
   const copyAllCompletedLinks = () => {
@@ -208,7 +243,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
   const getFileIcon = (name: string) => {
     const ext = name.split('.').pop()?.toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext || '')) {
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif'].includes(ext || '')) {
       return <ImageIcon className="w-5 h-5 text-sky-500" />;
     }
     if (['mp4', 'webm', 'mov', 'mkv'].includes(ext || '')) {
@@ -217,35 +252,67 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     if (['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext || '')) {
       return <MusicIcon className="w-5 h-5 text-emerald-500" />;
     }
-    return <FileIcon className="w-5 h-5 text-amber-500" />;
+    return <FileText className="w-5 h-5 text-amber-500" />;
   };
 
   const completedCount = queue.filter((q) => q.status === 'completed').length;
 
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6">
-      {/* Mode Bar & Expiry Selector (if Litterbox) */}
-      <div className="bg-white dark:bg-[#1e2327] rounded-2xl p-4 border border-gray-200 dark:border-gray-800 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className={`p-2.5 rounded-xl ${mode === 'catbox' ? 'bg-sky-100 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400' : 'bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400'}`}>
-            {mode === 'catbox' ? <Upload className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+      {/* Official Master Account Active Bar */}
+      <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl p-4 border border-slate-200/90 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                Official Catbox Routing Active
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-semibold">
+                {isMasterHash ? 'Master Account' : 'Custom Account'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Files upload directly to Catbox CDN ({activeHash.slice(0, 10)}...) with direct permanent hotlinks.
+            </p>
+          </div>
+        </div>
+
+        {onOpenUserhashModal && (
+          <button
+            type="button"
+            onClick={onOpenUserhashModal}
+            className="self-end sm:self-auto px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors"
+          >
+            Change Hash
+          </button>
+        )}
+      </div>
+
+      {/* Mode Bar & Expiry Selector (if Litterbox) */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className={`p-2.5 rounded-xl ${mode === 'catbox' ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'}`}>
+            {mode === 'catbox' ? <Zap className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               {mode === 'catbox' ? 'Catbox Permanent Upload' : 'Litterbox Ephemeral Upload'}
             </h2>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               {mode === 'catbox'
-                ? 'Files stay forever. Max 200MB per file.'
-                : 'Files automatically deleted after duration. Max 1GB per file.'}
+                ? 'Files stay forever on files.catbox.moe. Up to 200MB per file.'
+                : 'Files automatically deleted after duration. Up to 1GB per file.'}
             </p>
           </div>
         </div>
 
         {mode === 'litterbox' ? (
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Retention:</span>
-            <div className="grid grid-cols-4 gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl border border-gray-200 dark:border-gray-700 text-xs">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Expiry:</span>
+            <div className="grid grid-cols-4 gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
               {(['1h', '12h', '24h', '72h'] as ExpiryOption[]).map((opt) => (
                 <button
                   key={opt}
@@ -254,7 +321,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                   className={`px-2.5 py-1 font-semibold rounded-lg transition-all ${
                     expiry === opt
                       ? 'bg-amber-600 text-white shadow-xs'
-                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
                   {opt}
@@ -263,8 +330,8 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             </div>
           </div>
         ) : (
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
-            <span>Want temporary storage?</span>
+          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <span>Need temporary storage?</span>
             <button
               onClick={() => setMode('litterbox')}
               className="text-sky-600 dark:text-sky-400 font-semibold hover:underline"
@@ -277,6 +344,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
       {/* Main Drag-and-Drop Area */}
       <div
+        id="upload-dropzone"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -284,7 +352,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         className={`relative border-2 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all duration-200 ${
           isDragging
             ? 'border-sky-500 bg-sky-50/80 dark:bg-sky-950/40 scale-[1.01]'
-            : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-[#1a1e22] hover:border-sky-400 dark:hover:border-sky-600 shadow-sm'
+            : 'border-slate-300 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs hover:border-sky-400 dark:hover:border-sky-600 shadow-xs'
         }`}
       >
         <input
@@ -296,30 +364,32 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         />
 
         <div className="flex flex-col items-center justify-center space-y-3">
-          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-transform ${
-            isDragging ? 'scale-110 bg-sky-500 text-white' : 'bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400'
+          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-transform shadow-md ${
+            isDragging 
+              ? 'scale-110 bg-sky-600 text-white' 
+              : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
           }`}>
-            <FileUp className="w-8 h-8 animate-bounce duration-1000" />
+            <UploadCloud className="w-8 h-8" />
           </div>
 
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-gray-900 dark:text-white">
-              {isDragging ? 'Drop your files here to upload!' : 'Select or drop files here to upload'}
+            <h3 id="upload-hero-title" className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+              {isDragging ? 'Drop your files here to start upload' : 'Click to select or drag and drop files here'}
             </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Drag and drop multiple images, videos, audio, or files directly from your computer
+            <p id="upload-hero-subtitle" className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+              High performance upload pipeline with automatic official Catbox hash routing and multi-format link generation.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">
               {mode === 'catbox' ? '200 MB Limit' : '1 GB Limit'}
             </span>
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-              PNG, JPG, GIF, WebP, MP4, MP3, ZIP & more
+            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">
+              Images, Videos, Audio, Archives & Code
             </span>
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-              Direct hotlinking enabled
+            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">
+              Direct CDN Hotlinks
             </span>
           </div>
         </div>
@@ -327,11 +397,11 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
       {/* Upload Queue and Results */}
       {queue.length > 0 && (
-        <div className="bg-white dark:bg-[#1e2327] rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
+        <div className="upload-queue-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
           {/* Header toolbar */}
-          <div className="px-5 py-3.5 border-b border-gray-200 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3 bg-gray-50/50 dark:bg-gray-900/40">
+          <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-950/50">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-gray-900 dark:text-white">
+              <span className="text-sm font-bold text-slate-900 dark:text-white">
                 Upload Queue
               </span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
@@ -341,15 +411,15 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
             <div className="flex items-center gap-2">
               {/* Link format selector */}
-              <div className="flex items-center gap-1 bg-gray-200 dark:bg-gray-800 p-0.5 rounded-lg text-xs">
+              <div className="flex items-center gap-1 bg-slate-200 dark:bg-slate-800 p-0.5 rounded-xl text-xs">
                 {(['direct', 'markdown', 'html', 'bbcode'] as const).map((fmt) => (
                   <button
                     key={fmt}
                     onClick={() => setLinkFormat(fmt)}
-                    className={`px-2 py-0.5 rounded-md font-medium capitalize transition-all ${
+                    className={`px-2.5 py-1 rounded-lg font-medium uppercase text-[10px] tracking-wider transition-all ${
                       linkFormat === fmt
-                        ? 'bg-white dark:bg-gray-700 text-sky-600 dark:text-sky-300 shadow-xs'
-                        : 'text-gray-600 dark:text-gray-400'
+                        ? 'bg-white dark:bg-slate-700 text-sky-600 dark:text-sky-300 shadow-xs font-bold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
                     {fmt}
@@ -361,17 +431,17 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                 <button
                   type="button"
                   onClick={copyAllCompletedLinks}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1.5 transition-colors shadow-xs"
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1.5 transition-colors shadow-xs"
                 >
                   {allCopied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {allCopied ? 'All Copied!' : 'Copy All'}
+                  {allCopied ? 'All Copied' : 'Copy All'}
                 </button>
               )}
 
               <button
                 type="button"
                 onClick={() => setQueue([])}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-rose-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                className="p-1.5 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 title="Clear queue"
               >
                 <Trash2 className="w-4 h-4" />
@@ -380,24 +450,24 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           </div>
 
           {/* Queue Items List */}
-          <div className="divide-y divide-gray-100 dark:divide-gray-800/60 max-h-96 overflow-y-auto">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60 max-h-96 overflow-y-auto">
             {queue.map((item) => {
               const formattedLink = item.resultUrl ? getFormatString(item.resultUrl, item.name) : '';
               return (
                 <div
                   key={item.id}
-                  className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors"
+                  className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+                    <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 flex-shrink-0">
                       {getFileIcon(item.name)}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate max-w-xs">
+                        <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate max-w-xs">
                           {item.name}
                         </p>
-                        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                           {formatFileSize(item.size)}
                         </span>
                       </div>
@@ -405,11 +475,11 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                       {/* Progress bar or error message */}
                       {item.status === 'uploading' && (
                         <div className="w-full mt-1.5">
-                          <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400 mb-1">
-                            <span>Uploading...</span>
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-1 font-mono">
+                            <span>Uploading to Catbox CDN...</span>
                             <span>{item.progress}%</span>
                           </div>
-                          <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                          <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-sky-500 rounded-full transition-all duration-150"
                               style={{ width: `${item.progress}%` }}
@@ -420,7 +490,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
                       {item.status === 'error' && (
                         <div className="flex items-center gap-1.5 text-xs text-rose-500 mt-1">
-                          <AlertCircle className="w-3.5 h-3.5" />
+                          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                           <span>{item.errorMessage || 'Failed to upload'}</span>
                         </div>
                       )}
@@ -441,12 +511,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                       <button
                         type="button"
                         onClick={() => copyToClipboard(formattedLink)}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors ${
                           copiedUrl === formattedLink
                             ? 'bg-emerald-600 text-white'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
                         }`}
-                        title="Copy formatted link"
+                        title="Copy link"
                       >
                         {copiedUrl === formattedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedUrl === formattedLink ? 'Copied' : 'Copy'}</span>
@@ -456,7 +526,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                         href={item.resultUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-1.5 rounded-lg text-gray-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                        className="p-1.5 rounded-xl text-slate-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                         title="Open direct file link"
                       >
                         <ExternalLink className="w-4 h-4" />
@@ -478,8 +548,8 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                             mode: mode,
                           });
                         }}
-                        className="p-1.5 rounded-lg text-gray-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                        title="Preview media"
+                        className="p-1.5 rounded-xl text-slate-500 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        title="Preview file"
                       >
                         <Eye className="w-4 h-4" />
                       </button>

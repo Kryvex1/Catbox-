@@ -15,6 +15,7 @@ interface FileRecord {
   createdAt: number;
   expiresAt: number | null; // null for permanent Catbox, timestamp for Litterbox
   mode: "catbox" | "litterbox";
+  target?: "official" | "self_hosted";
   userhash?: string;
 }
 
@@ -151,6 +152,164 @@ function parseDuration(timeStr?: string): number | null {
   }
 }
 
+// Master official userhash requested by owner: all uploads route to this account by default
+export const DEFAULT_OFFICIAL_USERHASH = "7e283b658c3bbfb4bd46e510e";
+
+export function resolveUserhash(provided?: string): string {
+  if (provided && typeof provided === "string" && provided.trim().length > 0) {
+    return provided.trim();
+  }
+  return DEFAULT_OFFICIAL_USERHASH;
+}
+
+interface UploadToCatboxResult {
+  success: boolean;
+  url?: string;
+  error?: string;
+  isAuthRequired?: boolean;
+}
+
+// Upload buffer directly to official Litterbox (https://litterbox.catbox.moe/resources/internals/api.php)
+async function uploadToLitterboxOfficial(
+  buffer: Buffer,
+  filename: string,
+  time: string = "24h"
+): Promise<UploadToCatboxResult> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "fileupload");
+    formData.append("time", time || "24h");
+    const blob = new Blob([buffer]);
+    formData.append("fileToUpload", blob, filename);
+
+    const response = await fetch("https://litterbox.catbox.moe/resources/internals/api.php", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const text = (await response.text()).trim();
+    if (response.ok && text.startsWith("http")) {
+      return { success: true, url: text };
+    }
+    return { success: false, error: text || `Litterbox error status ${response.status}` };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Failed to connect to litterbox.catbox.moe" };
+  }
+}
+
+// Upload buffer directly to official Catbox (https://catbox.moe/user/api.php)
+async function uploadToCatboxOfficial(
+  buffer: Buffer,
+  filename: string,
+  userhash?: string
+): Promise<UploadToCatboxResult> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "fileupload");
+    if (userhash) {
+      formData.append("userhash", userhash);
+    }
+    const blob = new Blob([buffer]);
+    formData.append("fileToUpload", blob, filename);
+
+    const response = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const text = (await response.text()).trim();
+    if (response.ok && text.startsWith("http")) {
+      return { success: true, url: text };
+    }
+
+    if (text === "Invalid uploader" || text.includes("storage issues") || text === "Not signed in!") {
+      return {
+        success: false,
+        error:
+          text === "Not signed in!"
+            ? "Catbox rejected this userhash. Please check your User Hash from catbox.moe/user/manage.php."
+            : "Catbox.moe requires an official userhash for permanent uploads (anonymous uploads are currently paused by Catbox). Please enter your Catbox User Hash in settings, or use Litterbox mode for instant anonymous uploads!",
+        isAuthRequired: true,
+      };
+    }
+
+    return { success: false, error: text || `Catbox error status ${response.status}` };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Failed to connect to catbox.moe" };
+  }
+}
+
+// Create album on official Catbox
+async function createAlbumOnCatboxOfficial(
+  title: string,
+  desc: string,
+  files: string[],
+  userhash?: string
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "createalbum");
+    formData.append("title", title || "Untitled Album");
+    formData.append("desc", desc || "");
+    formData.append("files", files.map((f) => path.basename(f)).join(" "));
+    if (userhash) {
+      formData.append("userhash", userhash);
+    }
+
+    const response = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const text = (await response.text()).trim();
+    if (response.ok && text.startsWith("http")) {
+      return { success: true, url: text };
+    }
+    return { success: false, error: text || `Catbox error status ${response.status}` };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Failed to connect to catbox.moe" };
+  }
+}
+
+// Delete files on official Catbox
+async function deleteFilesFromCatboxOfficial(
+  filenames: string[],
+  userhash: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "deletefiles");
+    formData.append("userhash", userhash);
+    formData.append("files", filenames.map((f) => path.basename(f)).join(" "));
+
+    const response = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const text = (await response.text()).trim();
+    return { success: response.ok, message: text };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Failed to connect to catbox.moe" };
+  }
+}
+
 async function startServer() {
   const app = express();
 
@@ -226,6 +385,7 @@ async function startServer() {
       try {
         const reqtype = req.body.reqtype;
         const userhash = req.body.userhash || "";
+        const target = (req.body.target || req.query.target || "official") as string;
         const baseUrl = getBaseUrl(req);
 
         if (reqtype === "fileupload") {
@@ -236,26 +396,44 @@ async function startServer() {
             return res.status(400).send("No file uploaded.");
           }
 
-          const fileUrl = `${baseUrl}/files/${uploadedFile.filename}`;
-          const record: FileRecord = {
-            id: generateSlug(8),
-            originalName: uploadedFile.originalname,
-            filename: uploadedFile.filename,
-            url: fileUrl,
-            size: uploadedFile.size,
-            mimetype: uploadedFile.mimetype,
-            createdAt: Date.now(),
-            expiresAt: null,
-            mode: "catbox",
-            userhash: userhash || undefined,
-          };
+          // Always use official Catbox with master/custom hash
+          const effectiveHash = resolveUserhash(userhash);
+          const buffer = fs.readFileSync(uploadedFile.path);
+          const uploadRes = await uploadToCatboxOfficial(buffer, uploadedFile.originalname, effectiveHash);
 
-          filesDB.unshift(record);
-          saveData();
+          if (uploadRes.success && uploadRes.url) {
+            try {
+              fs.unlinkSync(uploadedFile.path);
+            } catch {}
 
-          // Catbox API returns the plain-text URL
-          res.setHeader("Content-Type", "text/plain");
-          return res.send(fileUrl);
+            const record: FileRecord = {
+              id: generateSlug(8),
+              originalName: uploadedFile.originalname,
+              filename: path.basename(new URL(uploadRes.url).pathname),
+              url: uploadRes.url,
+              size: uploadedFile.size,
+              mimetype: uploadedFile.mimetype,
+              createdAt: Date.now(),
+              expiresAt: null,
+              mode: "catbox",
+              target: "official",
+              userhash: effectiveHash,
+            };
+
+            filesDB.unshift(record);
+            saveData();
+
+            res.setHeader("Content-Type", "text/plain");
+            return res.send(uploadRes.url);
+          }
+
+          // If Catbox returned an error
+          if (uploadRes.error) {
+            res.setHeader("Content-Type", "text/plain");
+            return res.status(400).send(uploadRes.error);
+          }
+
+          return res.status(500).send("Upload to Catbox failed.");
         }
 
         if (reqtype === "urlupload") {
@@ -288,31 +466,38 @@ async function startServer() {
             else ext = ".bin";
           }
 
-          const slug = generateSlug(6);
-          const filename = `${slug}${ext}`;
-          const filePath = path.join(UPLOAD_DIR, filename);
+          const baseName = path.basename(parsedUrl.pathname) || `url_file${ext}`;
+          const effectiveHash = resolveUserhash(userhash);
 
-          fs.writeFileSync(filePath, buffer);
+          const uploadRes = await uploadToCatboxOfficial(buffer, baseName, effectiveHash);
+          if (uploadRes.success && uploadRes.url) {
+            const record: FileRecord = {
+              id: generateSlug(8),
+              originalName: baseName,
+              filename: path.basename(new URL(uploadRes.url).pathname),
+              url: uploadRes.url,
+              size: buffer.length,
+              mimetype: response.headers.get("content-type") || "application/octet-stream",
+              createdAt: Date.now(),
+              expiresAt: null,
+              mode: "catbox",
+              target: "official",
+              userhash: effectiveHash,
+            };
 
-          const fileUrl = `${baseUrl}/files/${filename}`;
-          const record: FileRecord = {
-            id: generateSlug(8),
-            originalName: path.basename(parsedUrl.pathname) || filename,
-            filename,
-            url: fileUrl,
-            size: buffer.length,
-            mimetype: response.headers.get("content-type") || "application/octet-stream",
-            createdAt: Date.now(),
-            expiresAt: null,
-            mode: "catbox",
-            userhash: userhash || undefined,
-          };
+            filesDB.unshift(record);
+            saveData();
 
-          filesDB.unshift(record);
-          saveData();
+            res.setHeader("Content-Type", "text/plain");
+            return res.send(uploadRes.url);
+          }
 
-          res.setHeader("Content-Type", "text/plain");
-          return res.send(fileUrl);
+          if (uploadRes.error) {
+            res.setHeader("Content-Type", "text/plain");
+            return res.status(400).send(uploadRes.error);
+          }
+
+          return res.status(500).send("URL Upload failed.");
         }
 
         if (reqtype === "createalbum") {
@@ -324,23 +509,27 @@ async function startServer() {
             .map((s: string) => s.trim())
             .filter(Boolean);
 
-          const albumId = generateSlug(6);
-          const albumUrl = `${baseUrl}/c/${albumId}`;
+          const effectiveHash = resolveUserhash(userhash);
+          const officialAlbum = await createAlbumOnCatboxOfficial(title, desc, fileList, effectiveHash);
+          if (officialAlbum.success && officialAlbum.url) {
+            const albumId = path.basename(new URL(officialAlbum.url).pathname);
+            const album: AlbumRecord = {
+              id: albumId,
+              title,
+              description: desc,
+              files: fileList,
+              createdAt: Date.now(),
+              userhash: effectiveHash,
+            };
+            albumsDB.unshift(album);
+            saveData();
 
-          const album: AlbumRecord = {
-            id: albumId,
-            title,
-            description: desc,
-            files: fileList,
-            createdAt: Date.now(),
-            userhash: userhash || undefined,
-          };
-
-          albumsDB.unshift(album);
-          saveData();
+            res.setHeader("Content-Type", "text/plain");
+            return res.send(officialAlbum.url);
+          }
 
           res.setHeader("Content-Type", "text/plain");
-          return res.send(albumUrl);
+          return res.status(400).send(officialAlbum.error || "Failed to create album on Catbox.");
         }
 
         if (reqtype === "deletefiles") {
@@ -349,6 +538,10 @@ async function startServer() {
             .split(/[\s\n,]+/)
             .map((s: string) => path.basename(s.trim()))
             .filter(Boolean);
+
+          if (userhash) {
+            await deleteFilesFromCatboxOfficial(targets, userhash);
+          }
 
           filesDB = filesDB.filter((f) => {
             if (targets.includes(f.filename)) {
@@ -386,10 +579,11 @@ async function startServer() {
       { name: "fileToUpload", maxCount: 1 },
       { name: "file", maxCount: 1 },
     ]),
-    (req, res) => {
+    async (req, res) => {
       try {
         const reqtype = req.body.reqtype;
         const time = req.body.time || "24h";
+        const target = (req.body.target || req.query.target || "official") as string;
         const duration = parseDuration(time) || 24 * 60 * 60 * 1000;
         const baseUrl = getBaseUrl(req);
 
@@ -402,6 +596,36 @@ async function startServer() {
 
         if (!uploadedFile) {
           return res.status(400).send("No file uploaded.");
+        }
+
+        if (target !== "local" && target !== "self_hosted") {
+          const buffer = fs.readFileSync(uploadedFile.path);
+          const uploadRes = await uploadToLitterboxOfficial(buffer, uploadedFile.originalname, time);
+
+          if (uploadRes.success && uploadRes.url) {
+            try {
+              fs.unlinkSync(uploadedFile.path);
+            } catch {}
+
+            const record: FileRecord = {
+              id: generateSlug(8),
+              originalName: uploadedFile.originalname,
+              filename: path.basename(new URL(uploadRes.url).pathname),
+              url: uploadRes.url,
+              size: uploadedFile.size,
+              mimetype: uploadedFile.mimetype,
+              createdAt: Date.now(),
+              expiresAt: Date.now() + duration,
+              mode: "litterbox",
+              target: "official",
+            };
+
+            filesDB.unshift(record);
+            saveData();
+
+            res.setHeader("Content-Type", "text/plain");
+            return res.send(uploadRes.url);
+          }
         }
 
         const expiresAt = Date.now() + duration;
@@ -417,6 +641,7 @@ async function startServer() {
           createdAt: Date.now(),
           expiresAt,
           mode: "litterbox",
+          target: "self_hosted",
         };
 
         filesDB.unshift(record);
@@ -436,11 +661,13 @@ async function startServer() {
   // ----------------------------------------------------
 
   // Multi-file upload for Web UI
-  app.post("/api/upload", upload.array("files", 20), (req, res) => {
+  app.post("/api/upload", upload.array("files", 20), async (req, res) => {
     try {
       const mode = (req.body.mode || "catbox") as "catbox" | "litterbox";
+      const target = (req.body.target || "official") as "official" | "self_hosted";
       const time = req.body.time || "24h";
       const userhash = req.body.userhash || undefined;
+      const autoFallback = req.body.autoFallback === "true" || req.body.autoFallback === true;
       const baseUrl = getBaseUrl(req);
 
       const files = (req.files as Express.Multer.File[]) || [];
@@ -453,23 +680,75 @@ async function startServer() {
         duration = parseDuration(time) || 24 * 60 * 60 * 1000;
       }
 
-      const results: FileRecord[] = files.map((f) => {
-        const fileUrl = `${baseUrl}/files/${f.filename}`;
+      const results: FileRecord[] = [];
+
+      for (const f of files) {
+        const fileBuffer = fs.readFileSync(f.path);
+        let officialUrl: string | undefined;
+        let activeMode: "catbox" | "litterbox" = mode;
+        let fileExpiresAt: number | null = duration ? Date.now() + duration : null;
+        const effectiveHash = resolveUserhash(userhash);
+
+        if (mode === "litterbox") {
+          const uploadRes = await uploadToLitterboxOfficial(fileBuffer, f.originalname, time);
+          if (!uploadRes.success || !uploadRes.url) {
+            return res.status(502).json({
+              error: uploadRes.error || "Failed to upload to official Litterbox (litterbox.catbox.moe).",
+            });
+          }
+          officialUrl = uploadRes.url;
+        } else {
+          // mode === "catbox" (Permanent) -> upload to official Catbox with effective userhash
+          const uploadRes = await uploadToCatboxOfficial(fileBuffer, f.originalname, effectiveHash);
+          if (uploadRes.success && uploadRes.url) {
+            officialUrl = uploadRes.url;
+            activeMode = "catbox";
+            fileExpiresAt = null;
+          } else {
+            // If Catbox fails, fallback to Litterbox (72h)
+            if (autoFallback) {
+              const litterFallback = await uploadToLitterboxOfficial(fileBuffer, f.originalname, "72h");
+              if (litterFallback.success && litterFallback.url) {
+                officialUrl = litterFallback.url;
+                activeMode = "litterbox";
+                fileExpiresAt = Date.now() + 72 * 60 * 60 * 1000;
+              } else {
+                return res.status(400).json({
+                  error: uploadRes.error || "Upload failed on official Catbox.",
+                  isAuthRequired: uploadRes.isAuthRequired,
+                });
+              }
+            } else {
+              return res.status(400).json({
+                error: uploadRes.error || "Upload failed on official Catbox.",
+                isAuthRequired: uploadRes.isAuthRequired,
+              });
+            }
+          }
+        }
+
+        // Clean up temp file on local disk
+        try {
+          fs.unlinkSync(f.path);
+        } catch {}
+
         const record: FileRecord = {
           id: generateSlug(8),
           originalName: f.originalname,
-          filename: f.filename,
-          url: fileUrl,
+          filename: path.basename(new URL(officialUrl).pathname),
+          url: officialUrl,
           size: f.size,
           mimetype: f.mimetype,
           createdAt: Date.now(),
-          expiresAt: duration ? Date.now() + duration : null,
-          mode,
-          userhash,
+          expiresAt: fileExpiresAt,
+          mode: activeMode,
+          target: "official",
+          userhash: effectiveHash,
         };
+
         filesDB.unshift(record);
-        return record;
-      });
+        results.push(record);
+      }
 
       saveData();
       return res.json({ success: true, files: results });
@@ -482,12 +761,18 @@ async function startServer() {
   // URL upload for Web UI
   app.post("/api/url-upload", async (req, res) => {
     try {
-      const { url, mode = "catbox", time = "24h", userhash } = req.body;
+      const {
+        url,
+        mode = "catbox",
+        time = "24h",
+        userhash,
+        autoFallback = true,
+      } = req.body;
+
       if (!url || typeof url !== "string") {
         return res.status(400).json({ error: "Please provide a valid URL." });
       }
 
-      const baseUrl = getBaseUrl(req);
       const response = await fetch(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Catbox/1.0",
@@ -512,37 +797,95 @@ async function startServer() {
         else ext = ".bin";
       }
 
-      const slug = generateSlug(6);
-      const filename = `${slug}${ext}`;
-      const filePath = path.join(UPLOAD_DIR, filename);
-
-      fs.writeFileSync(filePath, buffer);
-
+      const baseName = path.basename(parsedUrl.pathname) || `url_file${ext}`;
       let duration: number | null = null;
       if (mode === "litterbox") {
         duration = parseDuration(time) || 24 * 60 * 60 * 1000;
       }
 
-      const fileUrl = `${baseUrl}/files/${filename}`;
+      let officialUrl: string | undefined;
+      let activeMode: "catbox" | "litterbox" = mode;
+      let fileExpiresAt: number | null = duration ? Date.now() + duration : null;
+      const effectiveHash = resolveUserhash(userhash);
+
+      if (mode === "litterbox") {
+        const uploadRes = await uploadToLitterboxOfficial(buffer, baseName, time);
+        if (!uploadRes.success || !uploadRes.url) {
+          return res
+            .status(502)
+            .json({ error: uploadRes.error || "Failed to upload to official Litterbox." });
+        }
+        officialUrl = uploadRes.url;
+      } else {
+        const uploadRes = await uploadToCatboxOfficial(buffer, baseName, effectiveHash);
+        if (uploadRes.success && uploadRes.url) {
+          officialUrl = uploadRes.url;
+        } else if (autoFallback) {
+          const fallbackRes = await uploadToLitterboxOfficial(buffer, baseName, "72h");
+          if (fallbackRes.success && fallbackRes.url) {
+            officialUrl = fallbackRes.url;
+            activeMode = "litterbox";
+            fileExpiresAt = Date.now() + 72 * 60 * 60 * 1000;
+          } else {
+            return res
+              .status(400)
+              .json({ error: uploadRes.error, isAuthRequired: uploadRes.isAuthRequired });
+          }
+        } else {
+          return res
+            .status(400)
+            .json({ error: uploadRes.error, isAuthRequired: uploadRes.isAuthRequired });
+        }
+      }
+
       const record: FileRecord = {
         id: generateSlug(8),
-        originalName: path.basename(parsedUrl.pathname) || filename,
-        filename,
-        url: fileUrl,
+        originalName: baseName,
+        filename: path.basename(new URL(officialUrl).pathname),
+        url: officialUrl,
         size: buffer.length,
         mimetype: response.headers.get("content-type") || "application/octet-stream",
         createdAt: Date.now(),
-        expiresAt: duration ? Date.now() + duration : null,
-        mode,
-        userhash,
+        expiresAt: fileExpiresAt,
+        mode: activeMode,
+        target: "official",
+        userhash: effectiveHash,
       };
 
       filesDB.unshift(record);
       saveData();
-
       return res.json({ success: true, file: record });
     } catch (err: any) {
       console.error("URL upload error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete file endpoint (POST) for frontend convenience
+  app.post("/api/files/delete", async (req, res) => {
+    try {
+      const { filename, userhash } = req.body;
+      if (!filename) return res.status(400).json({ error: "Filename is required" });
+
+      const fn = path.basename(filename);
+
+      // If userhash provided and file was on Catbox, attempt deleting from official Catbox
+      if (userhash) {
+        await deleteFilesFromCatboxOfficial([fn], userhash);
+      }
+
+      filesDB = filesDB.filter((f) => f.filename !== fn && f.url !== filename);
+      saveData();
+
+      try {
+        const fp = path.join(UPLOAD_DIR, fn);
+        if (fs.existsSync(fp)) fs.unlinkSync(fp);
+      } catch (e) {
+        console.error("Error removing local file:", e);
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
@@ -574,32 +917,58 @@ async function startServer() {
     return res.json({ success: true });
   });
 
-  // Albums API
-  app.post("/api/albums", (req, res) => {
-    const { title, description, files, userhash } = req.body;
-    if (!title || !files || !Array.isArray(files)) {
-      return res.status(400).json({ error: "Title and files list are required." });
-    }
-
-    const baseUrl = getBaseUrl(req);
-    const albumId = generateSlug(6);
-    const album: AlbumRecord = {
-      id: albumId,
-      title,
-      description: description || "",
-      files,
-      createdAt: Date.now(),
-      userhash,
-    };
-
-    albumsDB.unshift(album);
-    saveData();
-
+  // Config API - supplies the master default userhash
+  app.get("/api/config", (_req, res) => {
     return res.json({
-      success: true,
-      album,
-      url: `${baseUrl}/c/${albumId}`,
+      defaultUserhash: DEFAULT_OFFICIAL_USERHASH,
+      defaultUserhashMasked: `${DEFAULT_OFFICIAL_USERHASH.slice(0, 8)}...${DEFAULT_OFFICIAL_USERHASH.slice(-4)}`,
+      masterAccountReady: true,
     });
+  });
+
+  // Albums API
+  app.post("/api/albums", async (req, res) => {
+    try {
+      const { title, description, files, userhash } = req.body;
+      if (!title || !files || !Array.isArray(files)) {
+        return res.status(400).json({ error: "Title and files list are required." });
+      }
+
+      const effectiveHash = resolveUserhash(userhash);
+
+      const officialRes = await createAlbumOnCatboxOfficial(
+        title,
+        description || "",
+        files,
+        effectiveHash
+      );
+      if (officialRes.success && officialRes.url) {
+        const albumId = path.basename(new URL(officialRes.url).pathname);
+        const album: AlbumRecord = {
+          id: albumId,
+          title,
+          description: description || "",
+          files,
+          createdAt: Date.now(),
+          userhash: effectiveHash,
+        };
+        albumsDB.unshift(album);
+        saveData();
+
+        return res.json({
+          success: true,
+          album,
+          url: officialRes.url,
+          isOfficial: true,
+        });
+      }
+
+      return res.status(400).json({
+        error: officialRes.error || "Failed to create album on official Catbox.",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/albums/:id", (req, res) => {

@@ -1,5 +1,7 @@
 export type UploadMode = 'catbox' | 'litterbox';
 
+export const DEFAULT_MASTER_USERHASH = '7e283b658c3bbfb4bd46e510e';
+
 export type ExpiryOption = '1h' | '12h' | '24h' | '72h';
 export type LitterboxRetention = ExpiryOption;
 
@@ -23,6 +25,7 @@ export interface AlbumRecord {
   files: string[];
   createdAt: number;
   userhash?: string;
+  url?: string;
   fileRecords?: FileRecord[];
 }
 

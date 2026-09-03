@@ -2,33 +2,30 @@ import React, { useState, useEffect } from 'react';
 import { 
   FileRecord, 
   UploadMode, 
-  LitterboxRetention, 
-  ServerStats 
+  ActiveTab, 
+  ServerStats,
+  DEFAULT_MASTER_USERHASH
 } from './types';
 import { Header } from './components/Header';
 import { UploadZone } from './components/UploadZone';
-import { UrlUploadModal } from './components/UrlUploadModal';
+import { UrlUpload } from './components/UrlUploadModal';
 import { FilePreviewModal } from './components/FilePreviewModal';
 import { MyFilesHistory } from './components/MyFilesHistory';
 import { AlbumManager } from './components/AlbumManager';
 import { ApiDocs } from './components/ApiDocs';
 import { FaqSection } from './components/FaqSection';
 import { 
-  Sparkles, 
-  Heart, 
-  ExternalLink, 
-  Terminal, 
-  Server, 
   CheckCircle2, 
-  ShieldCheck, 
-  Layers,
-  Cat
+  Heart, 
+  Terminal, 
+  ShieldCheck,
+  Zap,
+  Globe
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'files' | 'albums' | 'api' | 'faq'>('upload');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('upload');
   const [mode, setMode] = useState<UploadMode>('catbox');
-  const [retention, setRetention] = useState<LitterboxRetention>('24h');
   const [userhash, setUserhash] = useState<string>(() => {
     return localStorage.getItem('catbox_userhash') || '';
   });
@@ -49,12 +46,11 @@ export default function App() {
   });
 
   const [stats, setStats] = useState<ServerStats | null>(null);
-  const [showUrlModal, setShowUrlModal] = useState(false);
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
   const [albumInitialUrls, setAlbumInitialUrls] = useState<string[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Sync theme
+  // Sync dark mode class
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
@@ -65,7 +61,7 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Save userhash
+  // Save and fetch on userhash changes
   const handleUserhashChange = (newHash: string) => {
     setUserhash(newHash);
     localStorage.setItem('catbox_userhash', newHash);
@@ -75,7 +71,8 @@ export default function App() {
   // Fetch files from server
   const fetchFiles = async (uh = userhash) => {
     try {
-      const url = uh ? `/api/files?userhash=${encodeURIComponent(uh)}` : '/api/files';
+      const queryHash = uh || DEFAULT_MASTER_USERHASH;
+      const url = queryHash ? `/api/files?userhash=${encodeURIComponent(queryHash)}` : '/api/files';
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -85,11 +82,11 @@ export default function App() {
         }
       }
     } catch {
-      // Local fallback is already active
+      // Local fallback
     }
   };
 
-  // Fetch stats from server
+  // Fetch server stats
   const fetchStats = async () => {
     try {
       const res = await fetch('/api/stats');
@@ -111,62 +108,66 @@ export default function App() {
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3000);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handleUploadComplete = (newFiles: FileRecord[]) => {
+  const handleFileUploaded = (newFile: FileRecord) => {
     setFiles((prev) => {
-      const merged = [...newFiles, ...prev.filter((p) => !newFiles.some((n) => n.id === p.id))];
-      localStorage.setItem('catbox_cached_files', JSON.stringify(merged));
-      return merged;
+      const updated = [newFile, ...prev.filter((f) => f.id !== newFile.id && f.filename !== newFile.filename)];
+      localStorage.setItem('catbox_cached_files', JSON.stringify(updated));
+      return updated;
     });
     fetchStats();
-    showToast(`${newFiles.length} file(s) uploaded successfully!`);
+    showToast(`Uploaded ${newFile.originalName} to Catbox successfully!`);
   };
 
-  const handleDeleteFile = async (file: FileRecord) => {
+  const handleDeleteFile = async (filename: string) => {
     try {
+      const effectiveHash = userhash || DEFAULT_MASTER_USERHASH;
       const res = await fetch('/api/files/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.filename, userhash: userhash || undefined }),
+        body: JSON.stringify({ filename, userhash: effectiveHash }),
       });
 
       if (res.ok) {
         setFiles((prev) => {
-          const filtered = prev.filter((f) => f.id !== file.id);
+          const filtered = prev.filter((f) => f.filename !== filename);
           localStorage.setItem('catbox_cached_files', JSON.stringify(filtered));
           return filtered;
         });
+        if (previewFile && previewFile.filename === filename) {
+          setPreviewFile(null);
+        }
         fetchStats();
-        showToast('File removed successfully');
+        showToast('File deleted successfully');
       } else {
         const data = await res.json();
-        showToast(`Failed: ${data.error || 'Could not delete'}`);
+        showToast(`Deletion failed: ${data.error || 'Server error'}`);
       }
     } catch {
-      // If offline/error, remove locally
       setFiles((prev) => {
-        const filtered = prev.filter((f) => f.id !== file.id);
+        const filtered = prev.filter((f) => f.filename !== filename);
         localStorage.setItem('catbox_cached_files', JSON.stringify(filtered));
         return filtered;
       });
-      showToast('File removed from history');
+      if (previewFile && previewFile.filename === filename) {
+        setPreviewFile(null);
+      }
+      showToast('File removed from local list');
     }
   };
 
-  const handleOpenAlbumWithSelected = (urls: string[]) => {
-    setAlbumInitialUrls(urls);
+  const handleCreateAlbumFromFiles = (selectedUrls: string[]) => {
+    setAlbumInitialUrls(selectedUrls);
     setActiveTab('albums');
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f9fb] dark:bg-[#13171a] text-gray-900 dark:text-gray-100 flex flex-col font-sans transition-colors duration-200">
-      {/* Toast alert */}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200 selection:bg-sky-500 selection:text-white">
+      {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-gray-950 text-xs font-semibold shadow-xl border border-gray-700 dark:border-gray-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 text-xs font-semibold shadow-xl border border-slate-700 dark:border-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <CheckCircle2 className="w-4 h-4 text-sky-400 dark:text-sky-600" />
           <span>{toastMessage}</span>
         </div>
@@ -174,66 +175,51 @@ export default function App() {
 
       {/* Main Header */}
       <Header
+        mode={mode}
+        setMode={setMode}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
         userhash={userhash}
         setUserhash={handleUserhashChange}
-        fileCount={files.length}
-        darkMode={darkMode}
-        toggleDarkMode={() => setDarkMode(!darkMode)}
+        filesCount={files.length}
       />
 
-      {/* Main Content Body */}
-      <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-        {/* Upload Screen */}
+      {/* Content Area */}
+      <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* Upload View */}
         {activeTab === 'upload' && (
-          <div className="space-y-6">
-            {/* Notification notice card */}
-            <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-100 dark:border-sky-900/50 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5 text-sky-900 dark:text-sky-200">
-                <Cat className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" />
-                <span>
-                  <strong>Welcome to Catbox!</strong> Permanent and Litterbox disposable file hosting with raw direct URLs and zero bandwidth throttling.
-                </span>
-              </div>
-              <div className="flex items-center gap-3 self-end sm:self-auto flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('api')}
-                  className="font-semibold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1"
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  API & ShareX
-                </button>
-              </div>
-            </div>
-
-            <UploadZone
-              mode={mode}
-              setMode={setMode}
-              retention={retention}
-              setRetention={setRetention}
-              userhash={userhash}
-              onUploadComplete={handleUploadComplete}
-              onOpenUrlModal={() => setShowUrlModal(true)}
-              onPreviewFile={(f) => setPreviewFile(f)}
-            />
-          </div>
-        )}
-
-        {/* Files History Screen */}
-        {activeTab === 'files' && (
-          <MyFilesHistory
-            files={files}
-            onDeleteFile={handleDeleteFile}
-            onPreviewFile={(f) => setPreviewFile(f)}
-            onCreateAlbumWithSelected={handleOpenAlbumWithSelected}
-            onRefresh={fetchFiles}
+          <UploadZone
+            mode={mode}
+            setMode={setMode}
             userhash={userhash}
+            onFileUploaded={handleFileUploaded}
+            onPreviewFile={(f) => setPreviewFile(f)}
           />
         )}
 
-        {/* Album Manager */}
+        {/* URL Upload View */}
+        {activeTab === 'url' && (
+          <UrlUpload
+            mode={mode}
+            userhash={userhash}
+            onFileUploaded={handleFileUploaded}
+            onPreviewFile={(f) => setPreviewFile(f)}
+          />
+        )}
+
+        {/* My Files History View */}
+        {activeTab === 'history' && (
+          <MyFilesHistory
+            files={files}
+            onPreviewFile={(f) => setPreviewFile(f)}
+            onDeleteFile={handleDeleteFile}
+            onCreateAlbumFromFiles={handleCreateAlbumFromFiles}
+          />
+        )}
+
+        {/* Albums View */}
         {activeTab === 'albums' && (
           <AlbumManager
             files={files}
@@ -243,79 +229,66 @@ export default function App() {
           />
         )}
 
-        {/* API Docs Screen */}
+        {/* API Docs View */}
         {activeTab === 'api' && (
           <ApiDocs userhash={userhash} />
         )}
 
-        {/* FAQ Screen */}
+        {/* FAQ View */}
         {activeTab === 'faq' && (
           <FaqSection />
         )}
       </main>
 
-      {/* URL Upload Modal */}
-      {showUrlModal && (
-        <UrlUploadModal
-          userhash={userhash}
-          onClose={() => setShowUrlModal(false)}
-          onUploadComplete={(newFile) => {
-            handleUploadComplete([newFile]);
-            setShowUrlModal(false);
-          }}
-        />
-      )}
-
       {/* File Preview Modal */}
-      {previewFile && (
-        <FilePreviewModal
-          file={previewFile}
-          onClose={() => setPreviewFile(null)}
-          onDelete={(f) => {
-            handleDeleteFile(f);
-            setPreviewFile(null);
-          }}
-        />
-      )}
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        onDeleteFile={handleDeleteFile}
+      />
 
-      {/* Global Clean Minimal Footer */}
-      <footer className="w-full border-t border-gray-200 dark:border-gray-800/80 bg-white/70 dark:bg-[#181c1f]/70 backdrop-blur-xs py-6 mt-12 transition-colors">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-500 dark:text-gray-400">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-gray-700 dark:text-gray-300">Catbox.moe</span>
-            <span>— Free Anonymous Media & File Hosting</span>
+      {/* Modern High-End Footer */}
+      <footer className="w-full border-t border-slate-200/90 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 backdrop-blur-md py-6 mt-12 transition-colors">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
+          <div className="flex items-center gap-2.5">
+            <span className="font-bold text-slate-800 dark:text-slate-200">Catbox.moe</span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="flex items-center gap-1 text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Master Hash 7e283b65... Active
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-xs">
             <button
               type="button"
               onClick={() => setActiveTab('api')}
-              className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+              className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors font-medium"
             >
-              API & Tools
+              API & Integration
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('faq')}
-              className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+              className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors font-medium"
             >
-              FAQ / Rules
+              FAQ & Limits
             </button>
             <a
-              href={`/api/sharex?userhash=${userhash}`}
+              href={`/api/sharex?userhash=${userhash || DEFAULT_MASTER_USERHASH}`}
               download="Catbox.sxcu"
               className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors font-medium flex items-center gap-1"
             >
               ShareX .sxcu
             </a>
             <a
-              href="https://www.patreon.com/catbox"
+              href="https://files.catbox.moe"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-rose-500 transition-colors flex items-center gap-1 font-medium"
+              className="hover:text-sky-600 dark:hover:text-sky-400 transition-colors font-medium flex items-center gap-1"
             >
-              <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500/20" />
-              Support on Patreon
+              <Globe className="w-3.5 h-3.5" />
+              files.catbox.moe
             </a>
           </div>
         </div>
