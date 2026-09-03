@@ -1,0 +1,6 @@
+{
+  "name": "Catbox",
+  "description": "Full-featured Catbox.moe clone with permanent and Litterbox temporary file hosting, URL upload, albums, and API compatibility.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

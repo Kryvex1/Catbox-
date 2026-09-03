@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "j88ebdzn",
+      "originalName": "test_catbox.txt",
+      "filename": "wi7cx8.txt",
+      "url": "https://ais-dev-67dmiwwqrmtt2gxkeo4dpv-93086818307.asia-east1.run.app/files/wi7cx8.txt",
+      "size": 23,
+      "mimetype": "text/plain",
+      "createdAt": 1788418448872,
+      "expiresAt": 1788422048872,
+      "mode": "litterbox"
+    },
+    {
+      "id": "x1urx639",
+      "originalName": "test_catbox.txt",
+      "filename": "3dhnac.txt",
+      "url": "https://ais-dev-67dmiwwqrmtt2gxkeo4dpv-93086818307.asia-east1.run.app/files/3dhnac.txt",
+      "size": 23,
+      "mimetype": "text/plain",
+      "createdAt": 1788418423234,
+      "expiresAt": null,
+      "mode": "catbox"
+    }
+  ],
+  "albums": []
+}
